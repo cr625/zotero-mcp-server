@@ -64,30 +64,73 @@ def main():
         else:
             print("Failed to list tools.")
         
-        # Test search_items
-        print("\nTesting search_items...")
+        # Test get_recent_items to verify library access
+        print("\nTesting get_recent_items...")
         response = send_request(server_process, {
             "jsonrpc": "2.0",
-            "method": "call_tool",
+            "method": "read_resource",
             "params": {
-                "name": "search_items",
-                "arguments": {
-                    "query": "ethics",
-                    "limit": 5
-                }
+                "uri": "zotero://items/recent"
             },
             "id": 3
         })
         
-        if response and "result" in response and "content" in response["result"]:
+        if response and "result" in response and "contents" in response["result"]:
             print("Success!")
-            content = response["result"]["content"][0]["text"]
-            results = json.loads(content)
-            print(f"Found {len(results['results'])} results for query 'ethics'")
+            content = response["result"]["contents"][0]["text"]
+            items = json.loads(content)
+            print(f"Found {len(items)} recent items in your library")
+            if len(items) > 0:
+                print("\nHere are the first few items:")
+                for i, item in enumerate(items[:5]):
+                    if "data" in item and "title" in item["data"]:
+                        print(f"  {i+1}. {item['data']['title']}")
+                    else:
+                        print(f"  {i+1}. [No title]")
+            else:
+                print("Your library appears to be empty. Please add some items to your Zotero library.")
         else:
-            print("Failed to search items.")
+            print("Failed to get recent items.")
             if response:
                 print(f"Response: {json.dumps(response, indent=2)}")
+        
+        # Test search_items with different queries
+        print("\nTesting search_items with multiple queries...")
+        search_queries = ["ethics", "medical", "research", ""]  # Empty string gets all items
+        
+        for query in search_queries:
+            query_display = query if query else "ALL ITEMS"
+            print(f"\nSearching for: '{query_display}'...")
+            
+            response = send_request(server_process, {
+                "jsonrpc": "2.0",
+                "method": "call_tool",
+                "params": {
+                    "name": "search_items",
+                    "arguments": {
+                        "query": query,
+                        "limit": 10
+                    }
+                },
+                "id": 4
+            })
+            
+            if response and "result" in response and "content" in response["result"]:
+                content = response["result"]["content"][0]["text"]
+                results = json.loads(content)
+                print(f"Found {len(results['results'])} results for query '{query_display}'")
+                
+                if len(results['results']) > 0:
+                    print("First few results:")
+                    for i, item in enumerate(results['results'][:5]):
+                        if "data" in item and "title" in item["data"]:
+                            print(f"  {i+1}. {item['data']['title']}")
+                        else:
+                            print(f"  {i+1}. [No title]")
+            else:
+                print(f"Failed to search for '{query_display}'")
+                if response:
+                    print(f"Response: {json.dumps(response, indent=2)}")
     
     finally:
         # Stop the server
