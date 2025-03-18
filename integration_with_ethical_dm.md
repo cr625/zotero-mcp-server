@@ -1,105 +1,18 @@
-# Integrating Zotero MCP Server with AI Ethical Decision-Making Application
+# Integrating Zotero MCP Server with AI Ethical Decision-Making
 
-This document provides instructions for integrating the Zotero MCP server with the existing AI Ethical Decision-Making application.
+This guide provides examples of how to integrate the Zotero MCP server with your AI Ethical Decision-Making application.
 
-## Overview
+## Prerequisites
 
-The Zotero MCP server provides tools and resources for accessing and managing academic references from Zotero. By integrating it with the AI Ethical Decision-Making application, you can:
+- Zotero MCP server installed and configured
+- AI Ethical Decision-Making application
 
-1. Search for academic references related to ethical scenarios
-2. Retrieve citations for references
-3. Add references to a Zotero library
-4. Generate bibliographies for ethical case studies
+## Integration Examples
 
-## Installation
-
-1. Clone the Zotero MCP server repository:
-   ```bash
-   git clone https://github.com/your-username/zotero-mcp-server.git
-   ```
-
-2. Install dependencies:
-   ```bash
-   cd zotero-mcp-server
-   pip install -r requirements.txt
-   ```
-
-3. Configure your Zotero API credentials:
-   - Copy `.env.example` to `.env`
-   - Edit `.env` to add your Zotero API key, user ID, and optionally group ID
-
-## Configuration
-
-To integrate the Zotero MCP server with the AI Ethical Decision-Making application, you need to modify the MCP client configuration.
-
-### Option 1: Add Zotero MCP Server to Existing MCP Client
-
-Modify the `app/services/mcp_client.py` file to add methods for interacting with the Zotero MCP server:
+### 1. Searching for References Related to Ethical Scenarios
 
 ```python
-def get_zotero_references(self, query, limit=5):
-    """
-    Get references from Zotero matching a query.
-    
-    Args:
-        query: Search query
-        limit: Maximum number of results to return
-        
-    Returns:
-        Dictionary containing search results
-    """
-    response = self._send_request(
-        "call_tool",
-        {
-            "name": "search_items",
-            "arguments": {
-                "query": query,
-                "limit": limit
-            }
-        }
-    )
-    
-    # Parse JSON content
-    content = response["content"][0]["text"]
-    return json.loads(content)
-
-def get_zotero_citation(self, item_key, style="apa"):
-    """
-    Get citation for a specific Zotero item.
-    
-    Args:
-        item_key: Item key
-        style: Citation style (e.g., apa, mla, chicago)
-        
-    Returns:
-        Citation text
-    """
-    response = self._send_request(
-        "call_tool",
-        {
-            "name": "get_citation",
-            "arguments": {
-                "item_key": item_key,
-                "style": style
-            }
-        }
-    )
-    
-    # Return citation text
-    return response["content"][0]["text"]
-```
-
-### Option 2: Use a Separate Zotero MCP Client
-
-Alternatively, you can use the `ZoteroMCPClient` class from `integration_example.py` as a separate client for interacting with the Zotero MCP server.
-
-## Usage Examples
-
-### Example 1: Search for References Related to a Scenario
-
-```python
-# In app/routes/scenarios.py
-
+# In your scenario view route
 @bp.route("/scenario/<int:id>/references")
 def scenario_references(id):
     # Get scenario
@@ -110,154 +23,277 @@ def scenario_references(id):
     
     # Get references from Zotero
     mcp_client = MCPClient()
-    references = mcp_client.get_zotero_references(query)
+    references = mcp_client.search_zotero_items(query)
     
     # Render template
     return render_template("scenario_references.html", scenario=scenario, references=references)
 ```
 
-### Example 2: Add References to a Case Study
+### 2. Adding Citations to Case Studies
 
 ```python
-# In app/routes/cases.py
-
-@bp.route("/case/<int:id>/add_reference", methods=["POST"])
-def add_reference_to_case(id):
-    # Get case
-    case = Case.query.get_or_404(id)
+# In your case study creation route
+@bp.route("/case_study/create", methods=["GET", "POST"])
+def create_case_study():
+    form = CaseStudyForm()
     
-    # Get form data
-    title = request.form.get("title")
-    authors = request.form.get("authors")
-    journal = request.form.get("journal")
-    year = request.form.get("year")
-    
-    # Parse authors
-    creators = []
-    for author in authors.split(";"):
-        if author.strip():
-            parts = author.strip().split(",")
-            if len(parts) >= 2:
-                creators.append({
-                    "creatorType": "author",
-                    "lastName": parts[0].strip(),
-                    "firstName": parts[1].strip()
-                })
-    
-    # Add reference to Zotero
-    mcp_client = MCPClient()
-    response = mcp_client.add_item(
-        item_type="journalArticle",
-        title=title,
-        creators=creators,
-        additional_fields={
-            "publicationTitle": journal,
-            "date": year
-        }
-    )
-    
-    # Add reference to case
-    if response.get("success"):
-        item_key = response["successful"]["0"]["key"]
-        citation = mcp_client.get_zotero_citation(item_key)
-        
-        # Save citation to case
-        case.references = case.references or []
-        case.references.append({
-            "item_key": item_key,
-            "citation": citation
-        })
+    if form.validate_on_submit():
+        # Create case study
+        case_study = CaseStudy(
+            title=form.title.data,
+            description=form.description.data,
+            # ...
+        )
+        db.session.add(case_study)
         db.session.commit()
         
-        flash("Reference added successfully", "success")
-    else:
-        flash("Error adding reference", "error")
+        # Add citation to Zotero
+        mcp_client = MCPClient()
+        mcp_client.add_zotero_item(
+            item_type="document",
+            title=case_study.title,
+            creators=[
+                {
+                    "creatorType": "author",
+                    "firstName": current_user.first_name,
+                    "lastName": current_user.last_name
+                }
+            ],
+            additional_fields={
+                "abstractNote": case_study.description,
+                "date": datetime.now().strftime("%Y-%m-%d"),
+                "url": url_for("case_study.view", id=case_study.id, _external=True)
+            }
+        )
+        
+        flash("Case study created successfully!")
+        return redirect(url_for("case_study.view", id=case_study.id))
     
-    return redirect(url_for("cases.case_detail", id=id))
+    return render_template("case_study/create.html", form=form)
 ```
 
-### Example 3: Generate Bibliography for a Case Study
+### 3. Generating Bibliographies for Research Papers
 
 ```python
-# In app/routes/cases.py
-
-@bp.route("/case/<int:id>/bibliography")
-def case_bibliography(id):
-    # Get case
-    case = Case.query.get_or_404(id)
+# In your research paper view route
+@bp.route("/research_paper/<int:id>/bibliography")
+def research_paper_bibliography(id):
+    # Get research paper
+    paper = ResearchPaper.query.get_or_404(id)
     
-    # Get reference item keys
-    item_keys = [ref["item_key"] for ref in case.references or []]
+    # Get references
+    references = paper.references
     
-    if not item_keys:
-        flash("No references found", "warning")
-        return redirect(url_for("cases.case_detail", id=id))
+    # Get item keys
+    item_keys = [ref.zotero_key for ref in references if ref.zotero_key]
     
     # Get bibliography
     mcp_client = MCPClient()
-    bibliography = mcp_client.get_bibliography(item_keys)
+    bibliography = mcp_client.get_zotero_bibliography(item_keys)
     
     # Render template
-    return render_template("case_bibliography.html", case=case, bibliography=bibliography)
+    return render_template("research_paper/bibliography.html", paper=paper, bibliography=bibliography)
+```
+
+## MCP Client Implementation
+
+Here's an example of how to implement the MCP client for your AI Ethical Decision-Making application:
+
+```python
+# app/services/mcp_client.py
+
+import json
+import subprocess
+from typing import List, Dict, Any, Optional
+
+class MCPClient:
+    """Client for interacting with MCP servers."""
+    
+    def __init__(self):
+        """Initialize the MCP client."""
+        self.zotero_server_path = "/path/to/zotero-mcp-server/src/server.py"
+    
+    def _send_request(self, method: str, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Send a request to the Zotero MCP server."""
+        # Create request
+        request = {
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params,
+            "id": 1
+        }
+        
+        # Convert request to JSON
+        request_json = json.dumps(request)
+        
+        # Send request to server
+        process = subprocess.Popen(
+            ["python", self.zotero_server_path],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+        
+        # Send request
+        stdout, stderr = process.communicate(input=request_json + "\n")
+        
+        # Parse response
+        try:
+            response = json.loads(stdout)
+            return response
+        except json.JSONDecodeError:
+            raise Exception(f"Invalid response from server: {stdout}")
+    
+    def search_zotero_items(self, query: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """Search for items in the Zotero library."""
+        response = self._send_request(
+            method="call_tool",
+            params={
+                "name": "search_items",
+                "arguments": {
+                    "query": query,
+                    "limit": limit
+                }
+            }
+        )
+        
+        if "result" in response and "content" in response["result"]:
+            content = response["result"]["content"][0]["text"]
+            results = json.loads(content)
+            return results["results"]
+        
+        return []
+    
+    def add_zotero_item(self, item_type: str, title: str, creators: List[Dict[str, str]], additional_fields: Optional[Dict[str, Any]] = None) -> Optional[str]:
+        """Add an item to the Zotero library."""
+        response = self._send_request(
+            method="call_tool",
+            params={
+                "name": "add_item",
+                "arguments": {
+                    "item_type": item_type,
+                    "title": title,
+                    "creators": creators,
+                    "additional_fields": additional_fields or {}
+                }
+            }
+        )
+        
+        if "result" in response and "content" in response["result"]:
+            content = response["result"]["content"][0]["text"]
+            result = json.loads(content)
+            
+            if result.get("success"):
+                return result["successful"]["0"]["key"]
+        
+        return None
+    
+    def get_zotero_citation(self, item_key: str, style: str = "apa") -> str:
+        """Get a citation for an item in the Zotero library."""
+        response = self._send_request(
+            method="call_tool",
+            params={
+                "name": "get_citation",
+                "arguments": {
+                    "item_key": item_key,
+                    "style": style
+                }
+            }
+        )
+        
+        if "result" in response and "content" in response["result"]:
+            return response["result"]["content"][0]["text"]
+        
+        return ""
+    
+    def get_zotero_bibliography(self, item_keys: List[str], style: str = "apa") -> str:
+        """Get a bibliography for items in the Zotero library."""
+        response = self._send_request(
+            method="call_tool",
+            params={
+                "name": "get_bibliography",
+                "arguments": {
+                    "item_keys": item_keys,
+                    "style": style
+                }
+            }
+        )
+        
+        if "result" in response and "content" in response["result"]:
+            return response["result"]["content"][0]["text"]
+        
+        return ""
 ```
 
 ## Template Examples
 
-### Example 1: Scenario References Template
+### Scenario References Template
 
 ```html
 <!-- app/templates/scenario_references.html -->
+
 {% extends "base.html" %}
 
 {% block content %}
-<h1>References for {{ scenario.name }}</h1>
+<h1>{{ scenario.name }}</h1>
+<p>{{ scenario.description }}</p>
 
-<div class="card mb-4">
-    <div class="card-header">
-        <h2>Scenario Details</h2>
-    </div>
-    <div class="card-body">
-        <p><strong>Name:</strong> {{ scenario.name }}</p>
-        <p><strong>Description:</strong> {{ scenario.description }}</p>
-    </div>
-</div>
-
-<div class="card">
-    <div class="card-header">
-        <h2>Related References</h2>
-    </div>
-    <div class="card-body">
-        {% if references.results %}
-            <ul class="list-group">
-                {% for item in references.results %}
-                    <li class="list-group-item">
-                        <h5>{{ item.data.title }}</h5>
-                        {% if item.data.creators %}
-                            <p>
-                                <strong>Authors:</strong>
-                                {% for creator in item.data.creators %}
-                                    {{ creator.lastName }}, {{ creator.firstName }}{% if not loop.last %}; {% endif %}
-                                {% endfor %}
-                            </p>
-                        {% endif %}
-                        {% if item.data.publicationTitle %}
-                            <p><strong>Journal:</strong> {{ item.data.publicationTitle }}</p>
-                        {% endif %}
-                        {% if item.data.date %}
-                            <p><strong>Date:</strong> {{ item.data.date }}</p>
-                        {% endif %}
-                        <a href="#" class="btn btn-primary btn-sm">Add to Case</a>
-                    </li>
-                {% endfor %}
-            </ul>
-        {% else %}
-            <p>No references found.</p>
+<h2>References</h2>
+{% if references %}
+<ul class="references-list">
+    {% for ref in references %}
+    <li>
+        <h3>{{ ref.data.title }}</h3>
+        {% if ref.data.creators %}
+        <p>
+            {% for creator in ref.data.creators %}
+            {{ creator.lastName }}, {{ creator.firstName }}{% if not loop.last %}; {% endif %}
+            {% endfor %}
+        </p>
         {% endif %}
-    </div>
+        {% if ref.data.publicationTitle %}
+        <p><em>{{ ref.data.publicationTitle }}</em>, {{ ref.data.volume }}({{ ref.data.issue }}), {{ ref.data.pages }}</p>
+        {% endif %}
+        {% if ref.data.date %}
+        <p>{{ ref.data.date }}</p>
+        {% endif %}
+        {% if ref.data.abstractNote %}
+        <p>{{ ref.data.abstractNote }}</p>
+        {% endif %}
+    </li>
+    {% endfor %}
+</ul>
+{% else %}
+<p>No references found.</p>
+{% endif %}
+{% endblock %}
+```
+
+### Bibliography Template
+
+```html
+<!-- app/templates/research_paper/bibliography.html -->
+
+{% extends "base.html" %}
+
+{% block content %}
+<h1>{{ paper.title }} - Bibliography</h1>
+
+<div class="bibliography">
+    {{ bibliography | safe }}
 </div>
+
+<a href="{{ url_for('research_paper.view', id=paper.id) }}" class="btn btn-primary">Back to Paper</a>
 {% endblock %}
 ```
 
 ## Conclusion
 
-By integrating the Zotero MCP server with the AI Ethical Decision-Making application, you can enhance the application with academic reference management capabilities. This integration allows users to search for relevant references, add them to case studies, and generate bibliographies, making the application more useful for academic and research purposes.
+By integrating the Zotero MCP server with your AI Ethical Decision-Making application, you can provide rich bibliographic functionality to your users, including:
+
+- Searching for relevant references
+- Adding citations to case studies
+- Generating bibliographies for research papers
+
+This integration enhances the research capabilities of your application and provides a seamless experience for users working with ethical scenarios and case studies.
