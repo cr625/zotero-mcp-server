@@ -42,14 +42,17 @@ class ZoteroMCPServer:
             return
         
         try:
-            if self.group_id:
-                # Group library
-                self.zot = zotero.Zotero(self.group_id, 'group', self.api_key)
-                logger.info(f"Initialized Zotero client for group {self.group_id}")
-            elif self.user_id:
+            # Prioritize user library over group library
+            if self.user_id:
                 # User library
                 self.zot = zotero.Zotero(self.user_id, 'user', self.api_key)
                 logger.info(f"Initialized Zotero client for user {self.user_id}")
+                # Clear group_id to ensure we don't use it
+                self.group_id = None
+            elif self.group_id:
+                # Group library
+                self.zot = zotero.Zotero(self.group_id, 'group', self.api_key)
+                logger.info(f"Initialized Zotero client for group {self.group_id}")
             else:
                 logger.error("Either ZOTERO_USER_ID or ZOTERO_GROUP_ID must be set")
                 self.zot = None
