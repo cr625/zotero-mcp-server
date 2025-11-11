@@ -2,6 +2,8 @@
 
 A Model Context Protocol (MCP) server that integrates with Zotero, allowing AI applications to access and manipulate Zotero libraries.
 
+Built with the official [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk) following the latest MCP paradigms and best practices.
+
 ## Features
 
 - Search for items in Zotero libraries
@@ -96,6 +98,11 @@ The Zotero MCP server can be integrated with AI applications that support the Mo
 - `get_citation`: Get citation for a specific item
 - `add_item`: Add a new item to the Zotero library
 - `get_bibliography`: Get bibliography for multiple items
+- `create_collection`: Create a new collection in the Zotero library
+- `update_item`: Update an existing item in the Zotero library
+- `delete_item`: Delete an item from the Zotero library
+- `get_item_types`: Get list of all available Zotero item types
+- `get_item_fields`: Get available fields for a specific item type
 
 ## Documentation
 
