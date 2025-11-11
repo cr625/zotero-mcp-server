@@ -1,12 +1,19 @@
 #!/usr/bin/env python3
-import json
+"""
+Zotero MCP Server - Model Context Protocol server for Zotero integration.
+
+This server provides tools and resources for interacting with Zotero libraries,
+using the latest MCP paradigms and the official Python SDK.
+"""
+
 import os
 import sys
-import asyncio
+import json
 import logging
-from typing import Dict, List, Any, Optional
+from typing import Any, Optional
 from dotenv import load_dotenv
 from pyzotero import zotero
+from mcp.server.fastmcp import FastMCP
 
 # Configure logging
 logging.basicConfig(
@@ -19,552 +26,332 @@ logger = logging.getLogger('zotero-mcp-server')
 # Load environment variables
 load_dotenv()
 
-class ZoteroMCPServer:
-    """MCP server for Zotero integration."""
-    
-    def __init__(self):
-        """Initialize the MCP server."""
-        self.jsonrpc_id = 0
-        
-        # Get Zotero API credentials from environment variables
-        self.api_key = os.getenv('ZOTERO_API_KEY')
-        self.user_id = os.getenv('ZOTERO_USER_ID')
-        self.group_id = os.getenv('ZOTERO_GROUP_ID')
-        
-        # Initialize Zotero client
-        self._init_zotero_client()
-    
-    def _init_zotero_client(self):
-        """Initialize the Zotero client."""
-        if not self.api_key:
-            logger.error("ZOTERO_API_KEY environment variable not set")
-            self.zot = None
-            return
-        
-        try:
-            # Prioritize user library over group library
-            if self.user_id:
-                # User library
-                self.zot = zotero.Zotero(self.user_id, 'user', self.api_key)
-                logger.info(f"Initialized Zotero client for user {self.user_id}")
-                # Clear group_id to ensure we don't use it
-                self.group_id = None
-            elif self.group_id:
-                # Group library
-                self.zot = zotero.Zotero(self.group_id, 'group', self.api_key)
-                logger.info(f"Initialized Zotero client for group {self.group_id}")
-            else:
-                logger.error("Either ZOTERO_USER_ID or ZOTERO_GROUP_ID must be set")
-                self.zot = None
-        except Exception as e:
-            logger.error(f"Error initializing Zotero client: {str(e)}")
-            self.zot = None
-    
-    async def run(self):
-        """Run the MCP server."""
-        logger.info("Zotero MCP server running on stdio")
-        
-        # Process stdin/stdout
-        while True:
-            try:
-                # Read request from stdin
-                request_line = await self._read_line()
-                if not request_line:
-                    continue
-                
-                # Parse request
-                request = json.loads(request_line)
-                
-                # Process request
-                response = await self._process_request(request)
-                
-                # Send response
-                print(json.dumps(response), flush=True)
-            except Exception as e:
-                logger.error(f"Error processing request: {str(e)}")
-                # Send error response
-                error_response = {
-                    "jsonrpc": "2.0",
-                    "error": {
-                        "code": -32000,
-                        "message": f"Internal error: {str(e)}"
-                    },
-                    "id": self.jsonrpc_id
-                }
-                print(json.dumps(error_response), flush=True)
-    
-    async def _read_line(self):
-        """Read a line from stdin."""
-        return sys.stdin.readline().strip()
-    
-    async def _process_request(self, request):
-        """Process a JSON-RPC request."""
-        method = request.get("method")
-        params = request.get("params", {})
-        request_id = request.get("id")
-        self.jsonrpc_id = request_id
-        
-        # Process method
-        if method == "list_resources":
-            result = await self._handle_list_resources(params)
-        elif method == "list_resource_templates":
-            result = await self._handle_list_resource_templates(params)
-        elif method == "read_resource":
-            result = await self._handle_read_resource(params)
-        elif method == "list_tools":
-            result = await self._handle_list_tools(params)
-        elif method == "call_tool":
-            result = await self._handle_call_tool(params)
+# Initialize FastMCP server
+mcp = FastMCP("Zotero MCP Server")
+
+# Global Zotero client instance
+zot: Optional[zotero.Zotero] = None
+
+
+def init_zotero_client():
+    """Initialize the Zotero client with credentials from environment."""
+    global zot
+
+    api_key = os.getenv('ZOTERO_API_KEY')
+    user_id = os.getenv('ZOTERO_USER_ID')
+    group_id = os.getenv('ZOTERO_GROUP_ID')
+
+    if not api_key:
+        logger.error("ZOTERO_API_KEY environment variable not set")
+        return
+
+    try:
+        # Prioritize user library over group library
+        if user_id:
+            zot = zotero.Zotero(user_id, 'user', api_key)
+            logger.info(f"Initialized Zotero client for user {user_id}")
+        elif group_id:
+            zot = zotero.Zotero(group_id, 'group', api_key)
+            logger.info(f"Initialized Zotero client for group {group_id}")
         else:
-            # Method not found
-            return {
-                "jsonrpc": "2.0",
-                "error": {
-                    "code": -32601,
-                    "message": f"Method not found: {method}"
-                },
-                "id": request_id
-            }
-        
-        # Return result
-        return {
-            "jsonrpc": "2.0",
-            "result": result,
-            "id": request_id
-        }
-    
-    async def _handle_list_resources(self, params):
-        """Handle request to list available resources."""
-        return {
-            "resources": [
-                {
-                    "uri": "zotero://collections",
-                    "name": "Zotero Collections",
-                    "mimeType": "application/json",
-                    "description": "List of collections in the Zotero library"
-                },
-                {
-                    "uri": "zotero://items/top",
-                    "name": "Top-Level Items",
-                    "mimeType": "application/json",
-                    "description": "Top-level items in the Zotero library"
-                },
-                {
-                    "uri": "zotero://items/recent",
-                    "name": "Recent Items",
-                    "mimeType": "application/json",
-                    "description": "Recently added or modified items in the Zotero library"
-                }
-            ]
-        }
-    
-    async def _handle_list_resource_templates(self, params):
-        """Handle request to list available resource templates."""
-        return {
-            "resourceTemplates": [
-                {
-                    "uriTemplate": "zotero://collections/{collection_key}/items",
-                    "name": "Collection Items",
-                    "mimeType": "application/json",
-                    "description": "Items in a specific Zotero collection"
-                },
-                {
-                    "uriTemplate": "zotero://items/{item_key}",
-                    "name": "Item Details",
-                    "mimeType": "application/json",
-                    "description": "Details of a specific Zotero item"
-                },
-                {
-                    "uriTemplate": "zotero://items/{item_key}/citation/{style}",
-                    "name": "Item Citation",
-                    "mimeType": "text/plain",
-                    "description": "Citation for a specific Zotero item in a specific style"
-                }
-            ]
-        }
-    
-    async def _handle_read_resource(self, params):
-        """Handle request to read a resource."""
-        uri = params.get("uri")
-        
-        if not self.zot:
-            return {
-                "error": {
-                    "code": -32000,
-                    "message": "Zotero client not initialized. Check API credentials."
-                }
-            }
-        
-        try:
-            # Handle static resources
-            if uri == "zotero://collections":
-                collections = self.zot.collections()
-                return {
-                    "contents": [
-                        {
-                            "uri": uri,
-                            "mimeType": "application/json",
-                            "text": json.dumps(collections, indent=2)
-                        }
-                    ]
-                }
-            elif uri == "zotero://items/top":
-                items = self.zot.top(limit=50)
-                return {
-                    "contents": [
-                        {
-                            "uri": uri,
-                            "mimeType": "application/json",
-                            "text": json.dumps(items, indent=2)
-                        }
-                    ]
-                }
-            elif uri == "zotero://items/recent":
-                items = self.zot.items(limit=20, sort="dateModified", direction="desc")
-                return {
-                    "contents": [
-                        {
-                            "uri": uri,
-                            "mimeType": "application/json",
-                            "text": json.dumps(items, indent=2)
-                        }
-                    ]
-                }
-            
-            # Handle resource templates
-            if uri.startswith("zotero://collections/") and uri.endswith("/items"):
-                collection_key = uri.split("/")[2]
-                items = self.zot.collection_items(collection_key)
-                return {
-                    "contents": [
-                        {
-                            "uri": uri,
-                            "mimeType": "application/json",
-                            "text": json.dumps(items, indent=2)
-                        }
-                    ]
-                }
-            elif uri.startswith("zotero://items/") and "/citation/" in uri:
-                parts = uri.split("/")
-                item_key = parts[2]
-                style = parts[4]
-                citation = self.zot.item(item_key, format="citation", style=style)
-                return {
-                    "contents": [
-                        {
-                            "uri": uri,
-                            "mimeType": "text/plain",
-                            "text": citation
-                        }
-                    ]
-                }
-            elif uri.startswith("zotero://items/") and len(uri.split("/")) == 3:
-                item_key = uri.split("/")[2]
-                item = self.zot.item(item_key)
-                return {
-                    "contents": [
-                        {
-                            "uri": uri,
-                            "mimeType": "application/json",
-                            "text": json.dumps(item, indent=2)
-                        }
-                    ]
-                }
-            
-            # Resource not found
-            return {
-                "error": {
-                    "code": -32602,
-                    "message": f"Resource not found: {uri}"
-                }
-            }
-        except Exception as e:
-            logger.error(f"Error reading resource {uri}: {str(e)}")
-            return {
-                "error": {
-                    "code": -32000,
-                    "message": f"Error reading resource: {str(e)}"
-                }
-            }
-    
-    async def _handle_list_tools(self, params):
-        """Handle request to list available tools."""
-        return {
-            "tools": [
-                {
-                    "name": "search_items",
-                    "description": "Search for items in the Zotero library",
-                    "inputSchema": {
-                        "type": "object",
-                        "properties": {
-                            "query": {
-                                "type": "string",
-                                "description": "Search query"
-                            },
-                            "collection_key": {
-                                "type": "string",
-                                "description": "Collection key to search in (optional)"
-                            },
-                            "limit": {
-                                "type": "number",
-                                "description": "Maximum number of results to return"
-                            }
-                        },
-                        "required": ["query"]
-                    }
-                },
-                {
-                    "name": "get_citation",
-                    "description": "Get citation for a specific item",
-                    "inputSchema": {
-                        "type": "object",
-                        "properties": {
-                            "item_key": {
-                                "type": "string",
-                                "description": "Item key"
-                            },
-                            "style": {
-                                "type": "string",
-                                "description": "Citation style (e.g., apa, mla, chicago)",
-                                "default": "apa"
-                            }
-                        },
-                        "required": ["item_key"]
-                    }
-                },
-                {
-                    "name": "add_item",
-                    "description": "Add a new item to the Zotero library",
-                    "inputSchema": {
-                        "type": "object",
-                        "properties": {
-                            "item_type": {
-                                "type": "string",
-                                "description": "Item type (e.g., journal, book, webpage)"
-                            },
-                            "title": {
-                                "type": "string",
-                                "description": "Item title"
-                            },
-                            "creators": {
-                                "type": "array",
-                                "description": "Item creators (authors, editors, etc.)",
-                                "items": {
-                                    "type": "object",
-                                    "properties": {
-                                        "creatorType": {
-                                            "type": "string",
-                                            "description": "Creator type (e.g., author, editor)"
-                                        },
-                                        "firstName": {
-                                            "type": "string",
-                                            "description": "Creator first name"
-                                        },
-                                        "lastName": {
-                                            "type": "string",
-                                            "description": "Creator last name"
-                                        }
-                                    },
-                                    "required": ["creatorType", "lastName"]
-                                }
-                            },
-                            "collection_key": {
-                                "type": "string",
-                                "description": "Collection key to add the item to (optional)"
-                            },
-                            "additional_fields": {
-                                "type": "object",
-                                "description": "Additional fields for the item (e.g., date, url, publisher)"
-                            }
-                        },
-                        "required": ["item_type", "title"]
-                    }
-                },
-                {
-                    "name": "get_bibliography",
-                    "description": "Get bibliography for multiple items",
-                    "inputSchema": {
-                        "type": "object",
-                        "properties": {
-                            "item_keys": {
-                                "type": "array",
-                                "description": "Array of item keys",
-                                "items": {
-                                    "type": "string"
-                                }
-                            },
-                            "style": {
-                                "type": "string",
-                                "description": "Citation style (e.g., apa, mla, chicago)",
-                                "default": "apa"
-                            }
-                        },
-                        "required": ["item_keys"]
-                    }
-                }
-            ]
-        }
-    
-    async def _handle_call_tool(self, params):
-        """Handle request to call a tool."""
-        tool_name = params.get("name")
-        args = params.get("arguments", {})
-        
-        if not self.zot:
-            return {
-                "error": {
-                    "code": -32000,
-                    "message": "Zotero client not initialized. Check API credentials."
-                }
-            }
-        
-        try:
-            if tool_name == "search_items":
-                if "query" not in args:
-                    return {
-                        "error": {
-                            "code": -32602,
-                            "message": "Missing required parameter: query"
-                        }
-                    }
-                
-                query = args["query"]
-                collection_key = args.get("collection_key")
-                limit = args.get("limit", 20)
-                
-                search_params = {"q": query, "limit": limit}
-                
-                if collection_key:
-                    items = self.zot.collection_items_top(collection_key, **search_params)
-                else:
-                    items = self.zot.items(**search_params)
-                
-                return {
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": json.dumps({
-                                "query": query,
-                                "results": items
-                            }, indent=2)
-                        }
-                    ]
-                }
-            
-            elif tool_name == "get_citation":
-                if "item_key" not in args:
-                    return {
-                        "error": {
-                            "code": -32602,
-                            "message": "Missing required parameter: item_key"
-                        }
-                    }
-                
-                item_key = args["item_key"]
-                style = args.get("style", "apa")
-                
-                citation = self.zot.item(item_key, format="citation", style=style)
-                
-                return {
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": citation
-                        }
-                    ]
-                }
-            
-            elif tool_name == "add_item":
-                if "item_type" not in args or "title" not in args:
-                    return {
-                        "error": {
-                            "code": -32602,
-                            "message": "Missing required parameters: item_type and title"
-                        }
-                    }
-                
-                item_type = args["item_type"]
-                title = args["title"]
-                creators = args.get("creators", [])
-                collection_key = args.get("collection_key")
-                additional_fields = args.get("additional_fields", {})
-                
-                # Create item template
-                template = self.zot.item_template(item_type)
-                
-                # Set title
-                template["title"] = title
-                
-                # Set creators
-                if creators:
-                    template["creators"] = creators
-                
-                # Set additional fields
-                for key, value in additional_fields.items():
-                    template[key] = value
-                
-                # Create item
-                response = self.zot.create_items([template])
-                
-                # Add to collection if specified
-                if collection_key and response.get("success"):
-                    item_key = response["successful"]["0"]["key"]
-                    self.zot.addto_collection(collection_key, [item_key])
-                
-                return {
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": json.dumps(response, indent=2)
-                        }
-                    ]
-                }
-            
-            elif tool_name == "get_bibliography":
-                if "item_keys" not in args:
-                    return {
-                        "error": {
-                            "code": -32602,
-                            "message": "Missing required parameter: item_keys"
-                        }
-                    }
-                
-                item_keys = args["item_keys"]
-                style = args.get("style", "apa")
-                
-                # Get bibliography
-                bibliography = self.zot.bibliography(item_keys, style=style)
-                
-                return {
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": bibliography
-                        }
-                    ]
-                }
-            
-            else:
-                return {
-                    "error": {
-                        "code": -32601,
-                        "message": f"Unknown tool: {tool_name}"
-                    }
-                }
-        except Exception as e:
-            logger.error(f"Error calling tool {tool_name}: {str(e)}")
-            return {
-                "error": {
-                    "code": -32000,
-                    "message": f"Error calling tool: {str(e)}"
-                }
-            }
+            logger.error("Either ZOTERO_USER_ID or ZOTERO_GROUP_ID must be set")
+    except Exception as e:
+        logger.error(f"Error initializing Zotero client: {str(e)}")
+
+
+def ensure_client():
+    """Ensure Zotero client is initialized."""
+    if zot is None:
+        raise RuntimeError("Zotero client not initialized. Check API credentials.")
+
+
+# ============================================================================
+# RESOURCES - Read-only data access
+# ============================================================================
+
+@mcp.resource("zotero://collections")
+def get_collections() -> str:
+    """List of collections in the Zotero library."""
+    ensure_client()
+    collections = zot.collections()
+    return json.dumps(collections, indent=2)
+
+
+@mcp.resource("zotero://items/top")
+def get_top_items() -> str:
+    """Top-level items in the Zotero library."""
+    ensure_client()
+    items = zot.top(limit=50)
+    return json.dumps(items, indent=2)
+
+
+@mcp.resource("zotero://items/recent")
+def get_recent_items() -> str:
+    """Recently added or modified items in the Zotero library."""
+    ensure_client()
+    items = zot.items(limit=20, sort="dateModified", direction="desc")
+    return json.dumps(items, indent=2)
+
+
+@mcp.resource("zotero://collections/{collection_key}/items")
+def get_collection_items(collection_key: str) -> str:
+    """Items in a specific Zotero collection."""
+    ensure_client()
+    items = zot.collection_items(collection_key)
+    return json.dumps(items, indent=2)
+
+
+@mcp.resource("zotero://items/{item_key}")
+def get_item(item_key: str) -> str:
+    """Details of a specific Zotero item."""
+    ensure_client()
+    item = zot.item(item_key)
+    return json.dumps(item, indent=2)
+
+
+@mcp.resource("zotero://items/{item_key}/citation/{style}")
+def get_item_citation(item_key: str, style: str) -> str:
+    """Citation for a specific Zotero item in a specific style."""
+    ensure_client()
+    citation = zot.item(item_key, format="citation", style=style)
+    return citation
+
+
+# ============================================================================
+# TOOLS - Actions and operations
+# ============================================================================
+
+@mcp.tool()
+def search_items(
+    query: str,
+    collection_key: Optional[str] = None,
+    limit: int = 20
+) -> str:
+    """
+    Search for items in the Zotero library.
+
+    Args:
+        query: Search query string
+        collection_key: Optional collection key to search within
+        limit: Maximum number of results to return (default: 20)
+
+    Returns:
+        JSON string containing search results
+    """
+    ensure_client()
+
+    search_params = {"q": query, "limit": limit}
+
+    if collection_key:
+        items = zot.collection_items_top(collection_key, **search_params)
+    else:
+        items = zot.items(**search_params)
+
+    result = {
+        "query": query,
+        "count": len(items),
+        "results": items
+    }
+
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+def get_citation(item_key: str, style: str = "apa") -> str:
+    """
+    Get citation for a specific item.
+
+    Args:
+        item_key: The Zotero item key
+        style: Citation style (e.g., apa, mla, chicago). Default: apa
+
+    Returns:
+        Formatted citation string
+    """
+    ensure_client()
+    citation = zot.item(item_key, format="citation", style=style)
+    return citation
+
+
+@mcp.tool()
+def add_item(
+    item_type: str,
+    title: str,
+    creators: Optional[list[dict[str, str]]] = None,
+    collection_key: Optional[str] = None,
+    additional_fields: Optional[dict[str, Any]] = None
+) -> str:
+    """
+    Add a new item to the Zotero library.
+
+    Args:
+        item_type: Item type (e.g., journalArticle, book, webpage)
+        title: Item title
+        creators: List of creators with format [{"creatorType": "author", "firstName": "...", "lastName": "..."}]
+        collection_key: Optional collection key to add the item to
+        additional_fields: Additional fields (e.g., date, url, publisher)
+
+    Returns:
+        JSON string with creation response
+    """
+    ensure_client()
+
+    # Create item template
+    template = zot.item_template(item_type)
+
+    # Set title
+    template["title"] = title
+
+    # Set creators
+    if creators:
+        template["creators"] = creators
+
+    # Set additional fields
+    if additional_fields:
+        for key, value in additional_fields.items():
+            template[key] = value
+
+    # Create item
+    response = zot.create_items([template])
+
+    # Add to collection if specified
+    if collection_key and response.get("success"):
+        item_key = response["successful"]["0"]["key"]
+        zot.addto_collection(collection_key, [item_key])
+
+    return json.dumps(response, indent=2)
+
+
+@mcp.tool()
+def get_bibliography(item_keys: list[str], style: str = "apa") -> str:
+    """
+    Get bibliography for multiple items.
+
+    Args:
+        item_keys: List of Zotero item keys
+        style: Citation style (e.g., apa, mla, chicago). Default: apa
+
+    Returns:
+        Formatted bibliography string
+    """
+    ensure_client()
+    bibliography = zot.bibliography(item_keys, style=style)
+    return bibliography
+
+
+@mcp.tool()
+def create_collection(name: str, parent_key: Optional[str] = None) -> str:
+    """
+    Create a new collection in the Zotero library.
+
+    Args:
+        name: Name of the new collection
+        parent_key: Optional parent collection key for nested collections
+
+    Returns:
+        JSON string with creation response
+    """
+    ensure_client()
+
+    collection_data = {"name": name}
+    if parent_key:
+        collection_data["parentCollection"] = parent_key
+
+    response = zot.create_collections([collection_data])
+    return json.dumps(response, indent=2)
+
+
+@mcp.tool()
+def update_item(
+    item_key: str,
+    updates: dict[str, Any]
+) -> str:
+    """
+    Update an existing item in the Zotero library.
+
+    Args:
+        item_key: The Zotero item key to update
+        updates: Dictionary of fields to update
+
+    Returns:
+        JSON string with update response
+    """
+    ensure_client()
+
+    # Get the existing item
+    item = zot.item(item_key)
+
+    # Update fields
+    for key, value in updates.items():
+        item[key] = value
+
+    # Update the item
+    response = zot.update_item(item)
+    return json.dumps(response, indent=2)
+
+
+@mcp.tool()
+def delete_item(item_key: str) -> str:
+    """
+    Delete an item from the Zotero library.
+
+    Args:
+        item_key: The Zotero item key to delete
+
+    Returns:
+        Success message
+    """
+    ensure_client()
+
+    # Get item version for deletion
+    item = zot.item(item_key)
+    version = item.get('version')
+
+    # Delete the item
+    zot.delete_item(item, version=version)
+
+    return json.dumps({"success": True, "message": f"Item {item_key} deleted"})
+
+
+@mcp.tool()
+def get_item_types() -> str:
+    """
+    Get list of all available Zotero item types.
+
+    Returns:
+        JSON string containing all item types
+    """
+    ensure_client()
+    item_types = zot.item_types()
+    return json.dumps(item_types, indent=2)
+
+
+@mcp.tool()
+def get_item_fields(item_type: str) -> str:
+    """
+    Get available fields for a specific item type.
+
+    Args:
+        item_type: The item type to get fields for (e.g., journalArticle, book)
+
+    Returns:
+        JSON string containing available fields
+    """
+    ensure_client()
+    fields = zot.item_type_fields(item_type)
+    return json.dumps(fields, indent=2)
+
 
 def main():
-    """Main entry point for the console script."""
-    server = ZoteroMCPServer()
-    asyncio.run(server.run())
+    """Main entry point for the server."""
+    logger.info("Starting Zotero MCP Server")
 
-# Main entry point
+    # Initialize Zotero client
+    init_zotero_client()
+
+    # Run the MCP server (stdio transport by default)
+    mcp.run()
+
+
 if __name__ == "__main__":
     main()
